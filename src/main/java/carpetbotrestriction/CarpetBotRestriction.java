@@ -21,6 +21,7 @@ import java.util.LinkedHashSet;
 
 public class CarpetBotRestriction implements ModInitializer {
 	public static final String MOD_ID = "carpetbotrestriction";
+	public static final int MAX_BOTS = 2;
 	public static HashMap<String, HashSet<String>> PLAYERS = new HashMap<>();
 	public static HashMap<String, String> BOTS = new HashMap<>();
 

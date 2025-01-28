@@ -14,12 +14,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class ServerPlayNetworkHandlerMixin {
     @Shadow public ServerPlayerEntity player;
 
-    @Inject(method = "onDisconnected", at = @At("HEAD"))
+    @Inject(
+            method = "onDisconnected",
+            at = @At("HEAD")
+    )
     private void logDisconnect(DisconnectionInfo info, CallbackInfo ci) {
-        String botName = this.player.getName().getString();
-        String player = CarpetBotRestriction.BOTS.remove(botName);
-        CarpetBotRestriction.LOGGER.info("Removing {} from {}", botName, player);
-        if (botName == null || player == null) return;
-        CarpetBotRestriction.PLAYERS.get(player).remove(botName);
+        String botName = this.player.getName().getString().toLowerCase();
+        String playerName = CarpetBotRestriction.BOTS.remove(botName);
+        if (playerName == null) return;
+        CarpetBotRestriction.PLAYERS.get(playerName).remove(botName);
     }
 }
