@@ -1,5 +1,5 @@
 plugins {
-	id 'fabric-loom' version '1.9-SNAPSHOT'
+	id 'fabric-loom' version "${loom_version}"
 	id 'maven-publish'
 }
 
@@ -36,7 +36,15 @@ dependencies {
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-	modImplementation "carpet:fabric-carpet:${carpet_core_version}"
+	// Mod dependencies
+	modImplementation "carpet:fabric-carpet:${project.carpet_core_version}"
+	modImplementation "me.lucko:fabric-permissions-api:${project.fpa_version}"
+
+	// For config
+	implementation 'com.electronwill.night-config:toml:3.6.6'
+
+	// idk why
+	implementation 'it.unimi.dsi:fastutil:8.5.15'
 }
 
 processResources {

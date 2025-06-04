@@ -1,12 +1,14 @@
 {
-	"required": true,
-	"package": "carpetbotrestriction.mixin",
-	"compatibilityLevel": "JAVA_21",
-	"mixins": [
-		"PlayerCommandMixin",
-		"ServerPlayNetworkHandlerMixin"
-	],
-	"injectors": {
-		"defaultRequire": 1
+  "required": true,
+  "package": "carpetbotrestriction.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "EntityPlayerMPFakeMixin",
+    "PlayerCommandMixin",
+    "ServerPlayerEntityMixin",
+    "ServerPlayNetworkHandlerMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
 	}
 }
