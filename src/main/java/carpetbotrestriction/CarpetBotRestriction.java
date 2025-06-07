@@ -1,6 +1,5 @@
 package carpetbotrestriction;
 
-import com.electronwill.nightconfig.core.file.CommentedFileConfig;
 import com.mojang.brigadier.arguments.BoolArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import it.unimi.dsi.fastutil.objects.*;
@@ -24,12 +23,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Predicate;
 
 import static net.minecraft.server.command.CommandManager.*;
 
 public class CarpetBotRestriction implements ModInitializer {
 	public static final String MOD_ID = "carpetbotrestriction";
-	public static CommentedFileConfig CONFIG;
+	public static CBRConfig CONFIG;
 	public static final Object2ObjectOpenHashMap<UUID, ObjectOpenHashSet<UUID>> PLAYERS = new Object2ObjectOpenHashMap<>();
 	public static final Object2ObjectOpenHashMap<UUID, UUID> BOTS = new Object2ObjectOpenHashMap<>();
 	// Used to track player that tried to create a bot
@@ -38,6 +38,8 @@ public class CarpetBotRestriction implements ModInitializer {
 	public static ServerLifecycleEvents.ServerStopping saveRealPlayerList;
 	// File to store UUIDs of real players to prevent them from being used as bots
 	public static final ObjectOpenHashSet<UUID> REAL_PLAYERS = new ObjectOpenHashSet<>();
+	// check if fabric permissions api is loaded
+	public static final boolean FPALoaded = FabricLoader.getInstance().isModLoaded("fabric-permissions-api-v0");
 	@Override
 	public void onInitialize() {
 		Path path = FabricLoader.getInstance().getConfigDir().resolve("carpetbotrestriction/config.toml");
@@ -46,9 +48,7 @@ public class CarpetBotRestriction implements ModInitializer {
 		} catch (IOException e) {
 			CarpetBotRestriction.LOGGER.error("Failed to create directory", e);
 		}
-		CONFIG = CommentedFileConfig.builder(path)
-				.preserveInsertionOrder()
-				.build();
+		CONFIG = new CBRConfig(path.toString());
 		if (Files.notExists(path)) {
 			defaultConfig();
 			CONFIG.save();
@@ -75,17 +75,6 @@ public class CarpetBotRestriction implements ModInitializer {
 				CarpetBotRestriction.LOGGER.error(e.toString());
 			}
 		}
-		saveRealPlayerList = s -> {
-			try (BufferedWriter out = Files.newBufferedWriter(FabricLoader.getInstance().getConfigDir().resolve("carpetbotrestriction/real_player_uuids.txt"))) {
-				for (UUID uuid : REAL_PLAYERS) {
-					out.write(uuid.toString());
-					out.newLine();
-				}
-			}
-			catch (IOException e) {
-				CarpetBotRestriction.LOGGER.error(e.toString());
-			}
-		};
 		CommandRegistrationCallback.EVENT.register((dispatcher, registry, environment) -> {
 			dispatcher.register(literal("cbr")
 				.requires(Permissions.require("carpetbotrestriction.config", 3))

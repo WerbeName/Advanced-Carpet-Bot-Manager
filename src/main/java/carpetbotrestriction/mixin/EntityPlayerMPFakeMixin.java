@@ -27,18 +27,6 @@ public class EntityPlayerMPFakeMixin extends ServerPlayerEntity {
     }
 
     /**
-     * We track all real players that have logged onto the server so they aren't turned into bots
-     * Remove the player from real players list if they are a EntityPlayerMPFake instance
-     */
-    @Inject(
-            method = "<init>",
-            at = @At("CTOR_HEAD")
-    )
-    private void detectRealPlayerJoin(CallbackInfo ci) {
-        CarpetBotRestriction.REAL_PLAYERS.remove(super.getUuid());
-    }
-
-    /**
      * Checks if the player can create the bot
      * Number of bots cannot exceed limit and bot cannot be a player that has logged
      * into the server

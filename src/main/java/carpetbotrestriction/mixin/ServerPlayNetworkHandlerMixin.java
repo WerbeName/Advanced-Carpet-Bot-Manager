@@ -38,7 +38,7 @@ public abstract class ServerPlayNetworkHandlerMixin {
         }
         // If disconnected player is a real player, then if removeOnDisconnect is true, then
         // kill all the player's bots
-        if (!CarpetBotRestriction.CONFIG.getOrElse("removeOnDisconnect", false)) return;
+        if (!CarpetBotRestriction.CONFIG.get("removeOnDisconnect", false)) return;
         ObjectOpenHashSet<UUID> bots = CarpetBotRestriction.PLAYERS.get(entity);
         if (bots == null) return;
         MinecraftServer mc = this.getPlayer().getServer();

@@ -66,8 +66,8 @@ public class PlayerCommandMixin {
         if (player == null) return;
         UUID playerID = player.getUuid();
         ObjectOpenHashSet<UUID> botList = CarpetBotRestriction.PLAYERS.get(playerID);
-        int playerBotLimit = CarpetBotRestriction.CONFIG.getIntOrElse(String.format("%s.maxBots", playerID),
-                CarpetBotRestriction.CONFIG.getIntOrElse("defaultMaxBots", 2));
+        int playerBotLimit = CarpetBotRestriction.CONFIG.get(String.format("%s.maxBots", playerID),
+                CarpetBotRestriction.CONFIG.get("defaultMaxBots", 2));
         if (!Permissions.check(source, "carpetbotrestriction.user.create_own", true)) {
             CarpetBotRestriction.error(source, "You are not allowed to create a new bot; contact the server administrator for permission.");
             cir.setReturnValue(true);
@@ -100,7 +100,7 @@ public class PlayerCommandMixin {
         }
         ServerPlayerEntity player = source.getPlayer();
         if (player == null) return;
-        if (CarpetBotRestriction.CONFIG.getOrElse("removeOnDisconnect", false)) {
+        if (CarpetBotRestriction.CONFIG.get("removeOnDisconnect", false)) {
             CarpetBotRestriction.error(source, "You cannot shadow: this server is configured so your bots will be removed on disconnect");
             CarpetBotRestriction.LOGGER.debug("Prevented {} from shadowing: removeOnDisconnect is true", player.getGameProfile().getName());
             cir.setReturnValue(0);
@@ -108,8 +108,8 @@ public class PlayerCommandMixin {
         }
         UUID playerID = player.getUuid();
         ObjectOpenHashSet<UUID> botList = CarpetBotRestriction.PLAYERS.get(playerID);
-        int playerBotLimit = CarpetBotRestriction.CONFIG.getIntOrElse(String.format("%s.maxBots", playerID.toString()),
-                CarpetBotRestriction.CONFIG.getIntOrElse("defaultMaxBots", 2));
+        int playerBotLimit = CarpetBotRestriction.CONFIG.get(String.format("%s.maxBots", playerID.toString()),
+                CarpetBotRestriction.CONFIG.get("defaultMaxBots", 2));
         if ((botList != null && botList.size() >= playerBotLimit)) {
             CarpetBotRestriction.error(source, String.format("You cannot have more than %d bots. Shadowing will create another bot.", playerBotLimit));
             CarpetBotRestriction.LOGGER.debug("Prevented {} from shadowing: Limit is {} bots.", player.getGameProfile().getName(), playerBotLimit);

@@ -3,7 +3,7 @@ plugins {
 	id 'maven-publish'
 }
 
-version = project.mod_version
+version = project.mod_version+'-'+project.minecraft_version
 group = project.maven_group
 
 base {
@@ -38,14 +38,9 @@ dependencies {
 
 	// Mod dependencies
 	modImplementation "carpet:fabric-carpet:${project.carpet_core_version}"
-	modImplementation "me.lucko:fabric-permissions-api:${project.fpa_version}"
-
-	// For config
-	implementation 'com.electronwill.night-config:toml:3.6.6'
-
-	// idk why
-	implementation 'it.unimi.dsi:fastutil:8.5.15'
+	modImplementation include("me.lucko:fabric-permissions-api:${project.fpa_version}")
 }
+
 
 processResources {
 	inputs.property "version", project.version
