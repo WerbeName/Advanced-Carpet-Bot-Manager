@@ -23,7 +23,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.function.Predicate;
 
 import static net.minecraft.server.command.CommandManager.*;
 
@@ -35,11 +34,8 @@ public class CarpetBotRestriction implements ModInitializer {
 	// Used to track player that tried to create a bot
 	public static ServerCommandSource CREATE_BOT_SOURCE;
 	public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
-	public static ServerLifecycleEvents.ServerStopping saveRealPlayerList;
 	// File to store UUIDs of real players to prevent them from being used as bots
 	public static final ObjectOpenHashSet<UUID> REAL_PLAYERS = new ObjectOpenHashSet<>();
-	// check if fabric permissions api is loaded
-	public static final boolean FPALoaded = FabricLoader.getInstance().isModLoaded("fabric-permissions-api-v0");
 	@Override
 	public void onInitialize() {
 		Path path = FabricLoader.getInstance().getConfigDir().resolve("carpetbotrestriction/config.toml");
