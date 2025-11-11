@@ -1,4 +1,4 @@
-# Carpet Bot Restriction
+# Advanced Carpet Bot Manager
 
 A comprehensive Minecraft Fabric mod that provides safe and controlled bot management for all players while maintaining server performance and preventing abuse. Compatible with **Minecraft 1.21.10+** and the latest Fabric Carpet mod.
 

@@ -74,7 +74,7 @@ public class CarpetBotRestriction implements ModInitializer {
 
     @Override
     public void onInitialize() {
-        LOGGER.info("Carpet Bot Restriction mod initialized!");
+        LOGGER.info("Advanced Carpet Bot Manager mod initialized!");
         config = new CBRConfig();
         
         // Server-Lifecycle-Events für Bot-Cleanup
