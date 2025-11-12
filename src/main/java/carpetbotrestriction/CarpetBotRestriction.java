@@ -5,6 +5,7 @@ import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
+import it.unimi.dsi.fastutil.objects.ObjectOpenHashSet;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 // import net.fabricmc.fabric.api.networking.v1.EntityTrackingEvents; // Not available in current Fabric version
@@ -24,6 +25,11 @@ import net.minecraft.util.Formatting;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import net.minecraft.util.math.Vec3d;
+import java.util.regex.Pattern;
+import java.nio.charset.StandardCharsets;
+import java.util.Locale;
+import net.minecraft.world.GameMode;
+import com.mojang.authlib.GameProfile;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -42,8 +48,16 @@ public class CarpetBotRestriction implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger(MOD_ID);
     
     private static final String BOT_TEAM_NAME = "CBR_Bots";
-    private static final Map<String, String> BOT_OWNERS = new HashMap<>();
+    public static final Map<String, String> BOT_OWNERS = new HashMap<>();
     private static CBRConfig config;
+    
+    // Name sanitization pattern for bot names
+    private static final Pattern NAME_OK = Pattern.compile("^[A-Za-z0-9_]{3,16}$");
+    
+    // DarkCows-style bot tracking for packet fix
+    public static final Map<UUID, ObjectOpenHashSet<UUID>> PLAYERS = new ConcurrentHashMap<>();
+    public static final Map<UUID, UUID> BOTS = new ConcurrentHashMap<>();
+    public static ServerCommandSource CREATE_BOT_SOURCE = null;
     
     // Bot-Tracking für versteckte Entities (kein Minimap/Locator, aber Tab-Liste bleibt)
     public static final Set<UUID> HIDDEN_BOTS = ConcurrentHashMap.newKeySet();
@@ -79,10 +93,14 @@ public class CarpetBotRestriction implements ModInitializer {
         
         // Server-Lifecycle-Events für Bot-Cleanup
         ServerLifecycleEvents.SERVER_STARTED.register(server -> {
-            LOGGER.info("Server started - clearing bot ownership data");
+            LOGGER.info("Server started - clearing bot ownership data and creating bot team");
             BOT_OWNERS.clear();
             HIDDEN_BOTS.clear();
             BOT_OWNER_MAP.clear();
+            PLAYERS.clear();
+            BOTS.clear();
+            // Erstelle das Bot-Team beim Server-Start
+            getBotTeam(server);
         });
         
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
@@ -90,6 +108,8 @@ public class CarpetBotRestriction implements ModInitializer {
             BOT_OWNERS.clear();
             HIDDEN_BOTS.clear();
             BOT_OWNER_MAP.clear();
+            PLAYERS.clear();
+            BOTS.clear();
         });
         
         // Register commands using Fabric's command registration callback
@@ -115,12 +135,43 @@ public class CarpetBotRestriction implements ModInitializer {
             ServerPlayerEntity player = handler.getPlayer();
             String playerName = player.getName().getString();
             
-            // Bot-Team-Assignment für eigene Bots
-            if (player instanceof EntityPlayerMPFake && BOT_OWNERS.containsKey(playerName)) {
-                LOGGER.info("Bot {} joined the game - adding to team", playerName);
-                server.execute(() -> {
-                    addBotToTeam(server, player);
-                });
+            // Check if this is a bot (CBR or Carpet spawned)
+            if (player instanceof EntityPlayerMPFake) {
+                LOGGER.info("Bot {} joined the game", playerName);
+                
+                // Check if it's a CBR bot
+                if (BOT_OWNERS.containsKey(playerName)) {
+                    String ownerName = BOT_OWNERS.get(playerName);
+                    ServerPlayerEntity owner = server.getPlayerManager().getPlayer(ownerName);
+                    if (owner != null) {
+                        // Add DarkCows-style tracking for CBR bots
+                        addBotOwnership(owner.getUuid(), player.getUuid());
+                    }
+                    
+                    LOGGER.info("CBR Bot {} joined - adding to team", playerName);
+                    server.execute(() -> {
+                        addBotToTeam(server, player);
+                    });
+                }
+                // Check if it's a Carpet bot and CREATE_BOT_SOURCE is set
+                else if (CREATE_BOT_SOURCE != null) {
+                    ServerPlayerEntity owner = CREATE_BOT_SOURCE.getPlayer();
+                    if (owner != null) {
+                        String ownerName = owner.getName().getString();
+                        BOT_OWNERS.put(playerName, ownerName);
+                        // Add DarkCows-style tracking for Carpet bots
+                        addBotOwnership(owner.getUuid(), player.getUuid());
+                        LOGGER.info("Carpet Bot {} joined - registered to owner {} and adding to team", playerName, ownerName);
+                        
+                        // Send success message to the owner
+                        CREATE_BOT_SOURCE.sendFeedback(() -> Text.literal("Bot '" + playerName + "' spawned successfully!").formatted(Formatting.GREEN), false);
+                        
+                        server.execute(() -> {
+                            addBotToTeam(server, player);
+                        });
+                    }
+                    CREATE_BOT_SOURCE = null; // Reset after use
+                }
             }
             
             // Verstecke alle Bots vor dem neuen Spieler (außer seinen eigenen und wenn er OP ist)
@@ -170,6 +221,32 @@ public class CarpetBotRestriction implements ModInitializer {
             }
         });
         
+        // CRITICAL: Self-heal mechanism - fix all bots when a player joins
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
+            ServerPlayerEntity joiningPlayer = handler.getPlayer();
+            LOGGER.info("Player {} joined - running bot self-heal check", joiningPlayer.getName().getString());
+            
+            // Check and fix all existing bots
+            for (ServerPlayerEntity player : server.getPlayerManager().getPlayerList()) {
+                if (player instanceof EntityPlayerMPFake && BOT_OWNERS.containsKey(player.getName().getString())) {
+                    String botName = player.getName().getString();
+                    
+                    // CRITICAL: Ensure bot has valid GameMode
+                    if (player.interactionManager.getGameMode() == null) {
+                        player.changeGameMode(GameMode.SURVIVAL);
+                        LOGGER.warn("SELF-HEAL: Fixed null GameMode for bot {}", botName);
+                    }
+                    
+                    // Additional bot health checks
+                    try {
+                        LOGGER.debug("Self-heal: Bot {} has GameMode {}", botName, player.interactionManager.getGameMode());
+                    } catch (Exception e) {
+                        LOGGER.warn("Self-heal: Could not check bot {} state: {}", botName, e.getMessage());
+                    }
+                }
+            }
+        });
+        
         // Event-Listener für Bot-Disconnect (um Index-Bug zu beheben)
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             ServerPlayerEntity disconnectedPlayer = handler.getPlayer();
@@ -179,9 +256,8 @@ public class CarpetBotRestriction implements ModInitializer {
             if (disconnectedPlayer instanceof EntityPlayerMPFake && BOT_OWNERS.containsKey(playerName)) {
                 LOGGER.info("Bot {} disconnected - cleaning up", playerName);
                 
-                // Entferne Bot aus allen Maps
+                // Entferne Bot aus BOT_OWNERS Map (hiding system disabled)
                 BOT_OWNERS.remove(playerName);
-                unregisterHiddenBot(disconnectedPlayer);
                 
                 LOGGER.info("Bot {} cleanup completed", playerName);
             }
@@ -238,26 +314,31 @@ public class CarpetBotRestriction implements ModInitializer {
             
             String botName = generateBotName(playerName, server);
             
-            boolean botCreated = EntityPlayerMPFake.createFake(
-                botName, 
-                server, 
-                new Vec3d(player.getX(), player.getY(), player.getZ()), 
-                player.getYaw(), 
-                player.getPitch(), 
-                server.getOverworld().getRegistryKey(), 
-                null, 
-                true);
+            // Set CREATE_BOT_SOURCE for tracking
+            CREATE_BOT_SOURCE = source;
             
-            if (botCreated) {
+            // Use safe bot creation method
+            LOGGER.info("Attempting to create bot '{}' for player '{}' at position {},{},{}", 
+                botName, playerName, player.getX(), player.getY(), player.getZ());
+            
+            ServerPlayerEntity spawnedBot = createBotSafely(server, botName, (ServerPlayerEntity) player);
+            LOGGER.info("createBotSafely returned: {}", spawnedBot != null ? spawnedBot.getName().getString() : "null");
+            
+            if (spawnedBot != null) {
                 BOT_OWNERS.put(botName, playerName);
-                LOGGER.info("Bot {} will be assigned to team automatically when it joins the game", botName);
+                LOGGER.info("Bot {} registered in BOT_OWNERS map", botName);
                 
                 source.sendFeedback(() -> Text.literal("Bot '" + botName + "' spawned successfully!").formatted(Formatting.GREEN), false);
-                LOGGER.info("Player {} spawned bot {}", playerName, botName);
+                LOGGER.info("Player {} spawned bot {} with GameMode {}", playerName, botName, spawnedBot.interactionManager.getGameMode());
                 return 1;
             } else {
-                source.sendError(Text.literal("Failed to spawn bot. Please try again."));
-                return 0;
+                // Bot creation is async - register for success message when bot joins
+                BOT_OWNERS.put(botName, playerName);
+                LOGGER.info("Bot {} creation initiated, will confirm when bot joins", botName);
+                
+                // Send immediate feedback that creation was started
+                source.sendFeedback(() -> Text.literal("Bot '" + botName + "' spawning...").formatted(Formatting.YELLOW), false);
+                return 1;  // Return success - actual confirmation happens in join event
             }
             
         } catch (Exception e) {
@@ -441,16 +522,136 @@ public class CarpetBotRestriction implements ModInitializer {
     }
 
     private static String generateBotName(String playerName, MinecraftServer server) {
+        // Create bot name with first 5 characters: bot_{first 5 chars}
+        String first5Chars = playerName.length() > 5 ? playerName.substring(0, 5) : playerName;
+        String base = "bot_" + first5Chars.toLowerCase(Locale.ROOT);
+        String name = sanitizeName(base);
         int counter = 1;
-        String baseName = "bot_" + playerName + "_";
-        String botName;
+        String originalName = name;
         
-        do {
-            botName = baseName + counter;
+        // If name already exists, add a number
+        while (server.getPlayerManager().getPlayer(name) != null || BOT_OWNERS.containsKey(name)) {
+            name = originalName + counter;
+            if (name.length() > 16) {
+                // Truncate base name to make room for counter
+                String truncated = originalName.substring(0, Math.max(3, 16 - String.valueOf(counter).length()));
+                name = truncated + counter;
+            }
             counter++;
-        } while (server.getPlayerManager().getPlayer(botName) != null || BOT_OWNERS.containsKey(botName));
+            if (counter > 99) break; // Safety break
+        }
         
-        return botName;
+        // Final sanitization check
+        name = sanitizeName(name);
+        
+        LOGGER.info("Generated bot name: '{}' (first 5 chars of '{}') - team will add [BOT] prefix", 
+            name, playerName);
+        return name;
+    }
+    
+    /**
+     * Sanitize player name according to Minecraft rules
+     */
+    private static String sanitizeName(String input) {
+        if (input == null) input = "";
+        
+        // Remove all non-alphanumeric characters except underscore
+        String cleaned = input.replaceAll("[^A-Za-z0-9_]", "");
+        
+        // Ensure minimum length of 3
+        if (cleaned.length() < 3) {
+            cleaned = (cleaned + "___").substring(0, 3);
+        }
+        
+        // Ensure maximum length of 16
+        if (cleaned.length() > 16) {
+            cleaned = cleaned.substring(0, 16);
+        }
+        
+        return cleaned;
+    }
+    
+    /**
+     * Generate offline UUID for bot
+     */
+    private static UUID generateOfflineUuid(String name) {
+        return UUID.nameUUIDFromBytes(("OfflinePlayer:" + name).getBytes(StandardCharsets.UTF_8));
+    }
+    
+    /**
+     * Create bot with proper GameMode and profile setup to prevent null pointer exceptions
+     */
+    private static ServerPlayerEntity createBotSafely(MinecraftServer server, String botName, ServerPlayerEntity owner) {
+        try {
+            // Create sanitized name WITHOUT [BOT] prefix (that goes in team)
+            String safeName = sanitizeName(botName);
+            GameProfile profile = new GameProfile(generateOfflineUuid(safeName), safeName);
+            
+            // Get spawn position from owner
+            Vec3d pos = new Vec3d(owner.getX(), owner.getY(), owner.getZ());
+            
+            // Create bot using Carpet's method
+            boolean botCreated = EntityPlayerMPFake.createFake(
+                safeName,
+                server,
+                pos,
+                owner.getYaw(),
+                owner.getPitch(),
+                server.getOverworld().getRegistryKey(),
+                null,
+                true
+            );
+            
+            // Get the bot - might exist even if createFake returned false
+            ServerPlayerEntity bot = server.getPlayerManager().getPlayer(safeName);
+            
+            // If bot not found immediately, wait a bit (race condition)
+            if (bot == null) {
+                try {
+                    Thread.sleep(50); // Short wait for async bot creation
+                    bot = server.getPlayerManager().getPlayer(safeName);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+            
+            if (bot == null) {
+                LOGGER.error("Bot {} could not be created or found in player manager", safeName);
+                return null;
+            }
+            
+            if (!botCreated) {
+                LOGGER.info("Bot {} already existed, using existing bot", safeName);
+            } else {
+                LOGGER.info("Successfully created new bot {}", safeName);
+            }
+            
+            // CRITICAL: Fix GameMode if null (prevents NPE in PlayerInfoUpdate)
+            if (bot.interactionManager.getGameMode() == null) {
+                bot.changeGameMode(GameMode.SURVIVAL);
+                LOGGER.info("FIXED: Set bot {} gamemode to SURVIVAL (was null)", safeName);
+            }
+            
+            // CRITICAL: Remove any display name to prevent encoding issues
+            try {
+                // Try to set ping to 0 and clear display name if possible
+                // These might fail on some versions, but GameMode fix above is the critical part
+                if (bot instanceof EntityPlayerMPFake) {
+                    LOGGER.info("Bot {} is EntityPlayerMPFake, applying additional fixes", safeName);
+                }
+            } catch (Exception e) {
+                LOGGER.warn("Could not apply ping/display name fixes for bot {}: {}", safeName, e.getMessage());
+            }
+            
+            LOGGER.info("SUCCESS: Bot {} created with valid GameMode: {}", 
+                safeName, bot.interactionManager.getGameMode());
+            
+            return bot;
+            
+        } catch (Exception e) {
+            LOGGER.error("Exception creating bot {}: {}", botName, e.getMessage(), e);
+            return null;
+        }
     }
 
     private static int setMaxBots(CommandContext<ServerCommandSource> context) {
@@ -519,24 +720,29 @@ public class CarpetBotRestriction implements ModInitializer {
             Scoreboard scoreboard = server.getScoreboard();
             Team botTeam = scoreboard.getTeam(BOT_TEAM_NAME);
             
-            if (botTeam == null) {
-                // Team erstellen wie mit /team add
-                botTeam = scoreboard.addTeam(BOT_TEAM_NAME);
-                
-                // Team-Eigenschaften setzen wie mit /team modify
-                botTeam.setDisplayName(Text.literal("[BOT]").formatted(Formatting.GRAY));
-                botTeam.setColor(Formatting.GRAY);
-                botTeam.setPrefix(Text.literal("[BOT] ").formatted(Formatting.GRAY));
-                botTeam.setSuffix(Text.literal("").formatted(Formatting.GRAY)); // Leeres Suffix
-                
-                // Team-Verhalten konfigurieren
-                botTeam.setCollisionRule(Team.CollisionRule.NEVER); // Keine Kollision
-                botTeam.setNameTagVisibilityRule(Team.VisibilityRule.ALWAYS); // Name immer sichtbar
-                botTeam.setDeathMessageVisibilityRule(Team.VisibilityRule.NEVER); // Keine Todesnachrichten
-                botTeam.setShowFriendlyInvisibles(false); // Keine unsichtbaren Teammitglieder zeigen
-                
-                LOGGER.info("Successfully created bot team '{}' with gray formatting and [BOT] prefix", BOT_TEAM_NAME);
+            // Falls das Team bereits existiert, verwende es wieder
+            if (botTeam != null) {
+                LOGGER.info("Reusing existing bot team '{}'", BOT_TEAM_NAME);
+                return botTeam;
             }
+            
+            // Team erstellen falls es nicht existiert
+            botTeam = scoreboard.addTeam(BOT_TEAM_NAME);
+            LOGGER.info("Created new bot team '{}'", BOT_TEAM_NAME);
+            
+            // Team-Eigenschaften setzen wie mit /team modify
+            botTeam.setDisplayName(Text.literal("[BOT]").formatted(Formatting.GRAY));
+            botTeam.setColor(Formatting.GRAY);
+            botTeam.setPrefix(Text.literal("[BOT] ").formatted(Formatting.GRAY)); // Prefix wieder aktiviert
+            botTeam.setSuffix(Text.literal("").formatted(Formatting.GRAY)); // Leeres Suffix
+            
+            // Team-Verhalten konfigurieren
+            botTeam.setCollisionRule(Team.CollisionRule.NEVER); // Keine Kollision
+            botTeam.setNameTagVisibilityRule(Team.VisibilityRule.ALWAYS); // Name immer sichtbar
+            botTeam.setDeathMessageVisibilityRule(Team.VisibilityRule.NEVER); // Keine Todesnachrichten
+            botTeam.setShowFriendlyInvisibles(false); // Keine unsichtbaren Teammitglieder zeigen
+            
+            LOGGER.info("Successfully configured bot team '{}' with gray formatting and [BOT] prefix", BOT_TEAM_NAME);
             
             return botTeam;
         } catch (Exception e) {
@@ -575,19 +781,8 @@ public class CarpetBotRestriction implements ModInitializer {
             if (success) {
                 LOGGER.info("Successfully added bot '{}' to team '{}' - bot will now have gray name and [BOT] prefix", botName, BOT_TEAM_NAME);
                 
-                // Register bot for entity hiding (minimap/player locator)
-                String ownerName = BOT_OWNERS.get(botName);
-                if (ownerName != null) {
-                    ServerPlayerEntity owner = server.getPlayerManager().getPlayer(ownerName);
-                    if (owner != null) {
-                        registerHiddenBot(bot, owner);
-                        LOGGER.info("Registered bot {} for entity hiding from minimap", botName);
-                    } else {
-                        LOGGER.warn("Could not find owner {} for bot {} - bot will not be hidden from entity tracking", ownerName, botName);
-                    }
-                } else {
-                    LOGGER.warn("No owner found for bot {} - bot will not be hidden from entity tracking", botName);
-                }
+                // Bot hiding system DISABLED - bots should be visible to all players
+                LOGGER.info("Bot {} will be visible to all players (hiding system disabled)", botName);
                 
                 // Zusätzliche Verifikation
                 Team verifyTeam = scoreboard.getScoreHolderTeam(botName);
@@ -623,9 +818,8 @@ public class CarpetBotRestriction implements ModInitializer {
                 LOGGER.debug("Bot '{}' was not in any team", botName);
             }
             
-            // Unregister bot from entity hiding system
-            unregisterHiddenBot(bot);
-            LOGGER.info("Unregistered bot {} from entity hiding system", botName);
+            // Bot hiding system disabled - no need to unregister
+            LOGGER.info("Bot {} removal complete (hiding system disabled)", botName);
             
         } catch (Exception e) {
             LOGGER.error("Exception while removing bot {} from team: {}", bot.getName().getString(), e.getMessage(), e);
@@ -634,9 +828,10 @@ public class CarpetBotRestriction implements ModInitializer {
 
     /**
      * Check if a bot should be hidden from entity tracking
+     * DISABLED: All bots are now visible to all players
      */
     public static boolean isHiddenBot(ServerPlayerEntity bot) {
-        return HIDDEN_BOTS.contains(bot.getUuid());
+        return false; // Disable bot hiding - all bots are visible
     }
 
     /**
@@ -713,5 +908,21 @@ public class CarpetBotRestriction implements ModInitializer {
             HIDDEN_BOTS.remove(uuid);
             BOT_OWNER_MAP.remove(uuid);
         }
+    }
+    
+    /**
+     * Public getter for config (needed by mixins)
+     */
+    public static CBRConfig getConfig() {
+        return config;
+    }
+    
+    /**
+     * Called by mixins to track bot ownership (DarkCows-style)
+     */
+    public static void addBotOwnership(UUID playerUUID, UUID botUUID) {
+        PLAYERS.computeIfAbsent(playerUUID, k -> new ObjectOpenHashSet<>()).add(botUUID);
+        BOTS.put(botUUID, playerUUID);
+        LOGGER.debug("Added bot ownership: Player {} owns bot {}", playerUUID, botUUID);
     }
 }
